@@ -123,6 +123,10 @@ h2.blk + .two h3{margin-top:12px}
 .sl-btn:hover{border-color:var(--amber)}
 .sl-empty{color:var(--muted);font-size:13px}
 .sl-hint{font-size:12.5px;color:var(--muted);margin:6px 0 0}
+.pay-edit,.pay-saved{display:flex;gap:6px;align-items:center;flex-wrap:nowrap}
+.pay-amt{font-weight:600;min-width:84px;text-align:right}
+.pay-ok{font-size:12px;color:var(--bottle);border:1px solid var(--bottle);border-radius:999px;padding:1px 8px}
+.dif-lbl{display:block;font-size:11.5px;opacity:.8}
 .empty{padding:36px 20px;text-align:center;color:var(--muted)}
 .empty strong{display:block;color:var(--ink);font:600 18px var(--cond);margin-bottom:6px}
 
@@ -817,51 +821,74 @@ function updateCounts(){
 function renderPagos(){
   const el=$('v-pagos');
   if(!S.meta.days.length){ el.innerHTML=emptyState(); return; }
+  if(!S.pagoEdit) S.pagoEdit=new Set();
   const all=porFechaRuta(S.env);
   const cobr=all.filter(o=>o.monto>0.004), sobr=all.filter(o=>o.monto<-0.004);
-  const list=S.pagosOnlyPend?cobr.filter(o=>o.monto-(getPagado(o.fecha,o.ruta)||0)>0.004):cobr;
+  const dif=o=>Math.round((o.monto-(getPagado(o.fecha,o.ruta)||0))*100)/100;
+  const list=S.pagosOnlyPend?cobr.filter(o=>dif(o)>0.004||S.pagoEdit.has(o.key)):cobr;
   let tm=0,tp=0; cobr.forEach(o=>{tm+=o.monto;tp+=getPagado(o.fecha,o.ruta)||0;});
+  const reg=cobr.filter(o=>getPagado(o.fecha,o.ruta)!=null).length;
   const byR=new Map(); cobr.forEach(o=>{let r=byR.get(o.ruta)||{m:0,p:0};r.m+=o.monto;r.p+=getPagado(o.fecha,o.ruta)||0;byR.set(o.ruta,r);});
+  const cell=(o,i)=>{
+    const pg=getPagado(o.fecha,o.ruta);
+    if(pg==null||S.pagoEdit.has(o.key)){
+      return `<div class="pay-edit"><input class="money" type="number" step="0.01" min="0" inputmode="decimal" value="${pg==null?'':pg}" placeholder="0.00" aria-label="Monto pagado ${fmtDate(o.fecha)} ${esc(o.ruta)}" data-i="${i}">
+        <button class="btn small primary" type="button" data-act="save" data-i="${i}">Guardar</button>${pg!=null?`<button class="btn small" type="button" data-act="cancel" data-i="${i}">Cancelar</button>`:''}</div>`;
+    }
+    return `<div class="pay-saved"><span class="pay-amt">${fmtMoney(pg)}</span><span class="pay-ok">Guardado</span><button class="btn small" type="button" data-act="edit" data-i="${i}">Editar</button></div>`;
+  };
+  const difLabel=d=>d>0.004?'Falta pagar':(d<-0.004?'Pagado de más':'Completo');
   el.innerHTML=`
   <h2>Envases pagados</h2>
-  <p class="lead">El monto es la diferencia neta de envases por día y ruta (solo los días con faltante). Escribe lo que pagaste y el pendiente se calcula solo. Los días con sobrante se listan aparte.</p>
+  <p class="lead">El monto es la diferencia neta de envases por día y ruta (solo los días con faltante). Escribe lo que pagaste y toca Guardar; queda registrado y puedes corregirlo con Editar. La diferencia se calcula sola: rojo si falta pagar, verde si pagaste de más.</p>
   <div class="ledger">
-    <div><div class="k">Monto por pagar</div><div class="v">${fmtMoney(tm)}</div></div>
-    <div><div class="k">Pagado</div><div class="v">${fmtMoney(tp)}</div></div>
-    <div><div class="k">Pendiente</div><div class="v ${sign(tm-tp)}">${fmtMoney(tm-tp)}</div></div>
+    <div><div class="k">Monto por pagar</div><div class="v">${fmtMoney(tm)}</div><div class="s">${cobr.length} días-ruta con faltante</div></div>
+    <div><div class="k">Pagado</div><div class="v">${fmtMoney(tp)}</div><div class="s">${reg} de ${cobr.length} registrados</div></div>
+    <div><div class="k">Diferencia</div><div class="v ${sign(tm-tp)}">${fmtMoney(tm-tp)}</div><div class="s">${difLabel(Math.round((tm-tp)*100)/100)}</div></div>
     <div><div class="k">Sobrantes del periodo</div><div class="v neg">${fmtMoney(sumBy(sobr,o=>o.monto))}</div></div>
   </div>
   <div class="two">
     <div>
-      <div class="toolbar"><label style="display:flex;gap:8px;align-items:center;font-size:14px"><input type="checkbox" id="onlyPend" ${S.pagosOnlyPend?'checked':''}> Solo con pendiente</label>
-      <button class="btn small" type="button" id="payAll">Marcar filtradas como pagadas completas</button></div>
+      <div class="toolbar"><label style="display:flex;gap:8px;align-items:center;font-size:14px"><input type="checkbox" id="onlyPend" ${S.pagosOnlyPend?'checked':''}> Solo con diferencia por pagar</label></div>
       <div class="tbl-wrap"><table>
-        <thead><tr><th>Fecha</th><th>Ruta</th><th class="n">Monto</th><th class="n">Pagado</th><th class="n">Pendiente</th></tr></thead>
-        <tbody>${list.map((o,i)=>{const pg=getPagado(o.fecha,o.ruta);const pend=o.monto-(pg||0);return `<tr data-i="${i}"><td>${fmtDate(o.fecha)}</td><td>${esc(o.ruta)}</td><td class="n">${fmtMoney(o.monto)}</td>
-        <td class="n"><input class="money" type="number" step="0.01" inputmode="decimal" value="${pg==null?'':pg}" placeholder="0.00" aria-label="Pagado"></td><td class="n pend ${sign(pend)}">${fmtMoney(pend)}</td></tr>`;}).join('')||'<tr><td colspan="5" class="empty">No hay montos por pagar en este rango.</td></tr>'}</tbody>
+        <thead><tr><th>Fecha</th><th>Ruta</th><th class="n">Monto</th><th>Pagado</th><th class="n">Diferencia</th></tr></thead>
+        <tbody>${list.map((o,i)=>{const d=dif(o);return `<tr><td>${fmtDate(o.fecha)}</td><td>${esc(o.ruta)}</td><td class="n">${fmtMoney(o.monto)}</td>
+          <td>${cell(o,i)}</td><td class="n ${shade(d)}">${fmtMoney(d)}<span class="dif-lbl">${difLabel(d)}</span></td></tr>`;}).join('')||'<tr><td colspan="5" class="empty">No hay montos por pagar en este rango.</td></tr>'}</tbody>
+        ${list.length?`<tfoot><tr><td colspan="2">Total</td><td class="n">${fmtMoney(sumBy(list,o=>o.monto))}</td><td>${fmtMoney(sumBy(list,o=>getPagado(o.fecha,o.ruta)||0))}</td><td class="n ${shade(sumBy(list,dif))}">${fmtMoney(sumBy(list,dif))}</td></tr></tfoot>`:''}
       </table></div>
     </div>
     <div>
       <h3 style="margin-top:0">Por ruta</h3>
-      <div class="tbl-wrap"><table><thead><tr><th>Ruta</th><th class="n">Monto</th><th class="n">Pagado</th><th class="n">Pendiente</th></tr></thead>
-      <tbody>${[...byR.entries()].sort().map(([r,o])=>`<tr><td>${esc(r)}</td><td class="n">${fmtMoney(o.m)}</td><td class="n">${fmtMoney(o.p)}</td><td class="n ${sign(o.m-o.p)}">${fmtMoney(o.m-o.p)}</td></tr>`).join('')}</tbody></table></div>
+      <div class="tbl-wrap"><table><thead><tr><th>Ruta</th><th class="n">Monto</th><th class="n">Pagado</th><th class="n">Diferencia</th></tr></thead>
+      <tbody>${[...byR.entries()].sort().map(([r,o])=>`<tr><td>${esc(r)}</td><td class="n">${fmtMoney(o.m)}</td><td class="n">${fmtMoney(o.p)}</td>${tdM(Math.round((o.m-o.p)*100)/100)}</tr>`).join('')}</tbody>
+      <tfoot><tr><td>Total</td><td class="n">${fmtMoney(tm)}</td><td class="n">${fmtMoney(tp)}</td>${tdM(Math.round((tm-tp)*100)/100)}</tr></tfoot></table></div>
       <h3>Sobrantes por día y ruta</h3>
       <div class="tbl-wrap"><table><thead><tr><th>Fecha</th><th>Ruta</th><th class="n">Monto</th></tr></thead>
-      <tbody>${sobr.map(o=>`<tr><td>${fmtDate(o.fecha)}</td><td>${esc(o.ruta)}</td><td class="n neg">${fmtMoney(o.monto)}</td></tr>`).join('')||'<tr><td colspan="3" class="empty">Sin sobrantes.</td></tr>'}</tbody></table></div>
+      <tbody>${sobr.map(o=>`<tr><td>${fmtDate(o.fecha)}</td><td>${esc(o.ruta)}</td>${tdM(o.monto)}</tr>`).join('')||'<tr><td colspan="3" class="empty">Sin sobrantes.</td></tr>'}</tbody></table></div>
     </div>
   </div>`;
   $('onlyPend').onchange=e=>{S.pagosOnlyPend=e.target.checked;renderPagos();};
-  $('payAll').onclick=()=>{
-    const t=list.filter(o=>o.monto-(getPagado(o.fecha,o.ruta)||0)>0.004);
-    if(!t.length){toast('No hay pendientes en la lista.');return;}
-    if(!confirm(`Registrar como pagado el monto completo de ${t.length} días-ruta?`)) return;
-    t.forEach(o=>setPagado(o.fecha,o.ruta,o.monto)); renderPagos();
+  const tb=el.querySelector('tbody');
+  const save=i=>{
+    const o=list[i]; const inp=tb.querySelector(`input[data-i="${i}"]`); const v=inp.value.trim();
+    if(v===''){ setPagado(o.fecha,o.ruta,null); S.pagoEdit.delete(o.key); renderPagos(); toast('Pago borrado.'); return; }
+    const n=Math.round(toNum(v)*100)/100;
+    if(n<0){ toast('El monto pagado no puede ser negativo.'); inp.focus(); return; }
+    setPagado(o.fecha,o.ruta,n); S.pagoEdit.delete(o.key); renderPagos();
+    const d=Math.round((o.monto-n)*100)/100;
+    toast(`Guardado ${fmtDate(o.fecha)} ${o.ruta}: ${d>0.004?'falta pagar '+fmtMoney(d):d<-0.004?'pagado de más '+fmtMoney(-d):'pago completo'}.`);
   };
-  el.querySelector('tbody').onchange=e=>{
-    const tr=e.target.closest('tr[data-i]'); if(!tr) return;
-    const o=list[+tr.dataset.i]; const v=e.target.value.trim();
-    setPagado(o.fecha,o.ruta,v===''?null:Math.round(toNum(v)*100)/100);
-    renderPagos();
+  tb.onclick=e=>{
+    const b=e.target.closest('button[data-act]'); if(!b) return;
+    const i=+b.dataset.i, o=list[i];
+    if(b.dataset.act==='save') save(i);
+    else if(b.dataset.act==='edit'){ S.pagoEdit.add(o.key); renderPagos(); const inp=el.querySelector(`tbody input[data-i="${i}"]`); if(inp){inp.focus();inp.select();} }
+    else if(b.dataset.act==='cancel'){ S.pagoEdit.delete(o.key); renderPagos(); }
+  };
+  tb.onkeydown=e=>{
+    if(e.target.tagName!=='INPUT') return;
+    if(e.key==='Enter'){ e.preventDefault(); save(+e.target.dataset.i); }
+    else if(e.key==='Escape'){ const o=list[+e.target.dataset.i]; if(getPagado(o.fecha,o.ruta)!=null){S.pagoEdit.delete(o.key);renderPagos();} }
   };
 }
 
